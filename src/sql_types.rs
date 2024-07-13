@@ -24,6 +24,10 @@ pub struct ColumnPermissions {
 pub struct ColumnDirectives {
     pub name: Option<String>,
     pub description: Option<String>,
+    // @graphql({"internal": true })
+    pub internal: bool,
+    // @graphql({"update": "sql text" })
+    pub update: Option<String>,
 }
 
 #[derive(Deserialize, Clone, Debug, Eq, PartialEq, Hash)]
@@ -49,6 +53,8 @@ pub struct FunctionDirectives {
     pub name: Option<String>,
     // @graphql({"description": "the address of ..." })
     pub description: Option<String>,
+    // @graphql({"internal": true })
+    pub internal: bool,
 }
 
 #[derive(Deserialize, Clone, Debug, Eq, PartialEq, Hash)]
@@ -361,6 +367,7 @@ pub enum TypeCategory {
 pub struct Type {
     pub oid: u32,
     pub schema_oid: u32,
+    pub base_oid: u32,
     pub name: String,
     pub category: TypeCategory,
     pub array_element_type_oid: Option<u32>,
@@ -467,6 +474,9 @@ pub struct TableDirectives {
 
     // @graphql({"description": "the address of ..." })
     pub description: Option<String>,
+
+    // @graphql({"internal": true })
+    pub internal: bool,
 
     // @graphql({"totalCount": { "enabled": true } })
     pub total_count: Option<TableDirectiveTotalCount>,
@@ -947,7 +957,7 @@ pub fn load_sql_context(_config: &Config) -> Result<Arc<Context>, String> {
     /// This pass populates functions for tables
     fn populate_table_functions(mut context: Context) -> Context {
         let mut arg_type_to_func: HashMap<u32, Vec<&Arc<Function>>> = HashMap::new();
-        for function in context.functions.iter().filter(|f| f.num_args == 1) {
+        for function in context.functions.iter().filter(|f| f.num_args >= 1) {
             let functions = arg_type_to_func.entry(function.arg_types[0]).or_default();
             functions.push(function);
         }

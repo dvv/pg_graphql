@@ -1213,6 +1213,7 @@ impl ___Type for QueryType {
             .context
             .tables
             .values()
+            .filter(|table| !table.directives.internal)
             .filter(|table| self.schema.graphql_table_select_types_are_valid(table))
         {
             {
@@ -1295,6 +1296,7 @@ fn function_fields(schema: &Arc<__Schema>, volatilities: &[FunctionVolatility]) 
         .context
         .functions
         .iter()
+        .filter(|table| !table.directives.internal)
         .filter(|func| func.is_supported(&schema.context, &function_name_to_count))
         .filter(|func| volatilities.contains(&func.volatility))
         .filter_map(|func| match sql_types.get(&func.type_oid) {
@@ -1417,6 +1419,7 @@ impl ___Type for MutationType {
 
         // TODO, filter to types in type map in case any were filtered out
         for table in self.schema.context.tables.values() {
+            if table.directives.internal { continue; }
             let table_base_type_name = self.schema.graphql_table_base_type_name(table);
 
             if self.schema.graphql_table_insert_types_are_valid(table) {
@@ -1842,7 +1845,7 @@ impl Type {
 
         match self.category {
             TypeCategory::Other => {
-                Some(match self.oid {
+                Some(match self.base_oid {
                     20 => __Type::Scalar(Scalar::BigInt),       // bigint
                     16 => __Type::Scalar(Scalar::Boolean),      // boolean
                     1082 => __Type::Scalar(Scalar::Date),       // date
@@ -2002,6 +2005,7 @@ impl ___Type for NodeType {
             .table
             .columns
             .iter()
+            .filter(|table| !table.directives.internal)
             .filter(|x| x.permissions.is_selectable)
             .filter(|x| !self.schema.context.is_composite(x.type_oid))
             .filter_map(|col| {
@@ -2070,8 +2074,51 @@ impl ___Type for NodeType {
                             let gql_args = match &gql_ret_type {
                                 __Type::Connection(connection_type) => {
                                     connection_type.get_connection_input_args()
-                                }
-                                _ => vec![],
+                                },
+                                _ =>
+                                    func
+                                    .args()
+                                    .skip(1)
+                                    .filter(|(_, _, arg_name, _)| !arg_name.is_none())
+                                    .filter_map(|(arg_type, _, arg_name, arg_default)| match sql_types.get(&arg_type) {
+                                        Some(t) => {
+                                            if matches!(t.category, TypeCategory::Pseudo) {
+                                                None
+                                            } else {
+                                                Some((t, arg_name.unwrap(), arg_default))
+                                            }
+                                        }
+                                        None => None,
+                                    })
+                                    .filter_map(|(arg_type, arg_name, arg_default)| {
+                                        arg_type.to_graphql_type(None, false, &self.schema).map(|t| {
+                                            // wrap arg type in non-null if arg is not default
+                                            let t = if arg_default.is_none() {
+                                                __Type::NonNull(NonNullType { type_: Box::new(t) })
+                                            } else {
+                                                t
+                                            };
+                                            (t, arg_name, arg_default)
+                                        })
+                                    })
+                                    .map(|(arg_type, arg_name, arg_default)| {
+                                        let default_value = if let Some(default_value) = arg_default {
+                                            match default_value {
+                                                DefaultValue::NonNull(value) => Some(value),
+                                                DefaultValue::Null => None,
+                                            }
+                                        } else {
+                                            None
+                                        };
+                                        __InputValue {
+                                            name_: self.schema.graphql_function_arg_name(func, arg_name),
+                                            type_: arg_type,
+                                            description: None,
+                                            default_value,
+                                            sql_type: None,
+                                        }
+                                    })
+                                    .collect()
                             };
 
                             Some(__Field {
@@ -3087,9 +3134,8 @@ impl ___Type for InsertInputType {
                 .filter_map(|col| {
                     sql_column_to_graphql_type(col, &self.schema).map(|utype| __InputValue {
                         name_: self.schema.graphql_column_field_name(col),
-                        // If triggers are involved, we can't detect if a field is non-null. Default
-                        // all fields to non-null and let postgres errors handle it.
-                        type_: utype.nullable_type(),
+                        // If triggers are involved, we can't detect if a field is non-null.
+                        type_: if col.has_default { utype.nullable_type() } else { utype },
                         description: None,
                         default_value: None,
                         sql_type: Some(NodeSQLType::Column(Arc::clone(col))),
@@ -3675,6 +3721,7 @@ impl ___Type for FilterEntityType {
             .table
             .columns
             .iter()
+            .filter(|table| !table.directives.internal)
             .filter(|x| x.permissions.is_selectable)
             // No filtering on composites
             .filter(|x| !self.schema.context.is_composite(x.type_oid))
@@ -3906,6 +3953,7 @@ impl ___Type for OrderByEntityType {
             self.table
                 .columns
                 .iter()
+                .filter(|table| !table.directives.internal)
                 .filter(|x| x.permissions.is_selectable)
                 // No ordering by arrays
                 .filter(|x| !x.type_name.ends_with("[]"))

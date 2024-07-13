@@ -430,7 +430,10 @@ impl MutationEntrypoint<'_> for UpdateBuilder {
 
                 let value_clause = param_context.clause_for(val, &column.type_name)?;
 
-                let set_clause_frag = format!("{quoted_column} = {value_clause}");
+                let set_clause_frag = format!("{quoted_column} = {}", match &column.directives.update {
+                    None => value_clause,
+                    Some(expr) => expr.replace("${}", &value_clause)
+                });
                 set_clause_frags.push(set_clause_frag);
             }
             set_clause_frags.join(", ")

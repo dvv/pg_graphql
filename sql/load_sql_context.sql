@@ -83,12 +83,19 @@ select
         ),
         'types', coalesce(
             (
+                -- NB: as per https://www.postgresql.org/message-id/CAGRrpzbr6b7VP%3DDvGZ2W5t-NyczzBUZfd4qCVm7pVPepJOLaUw%40mail.gmail.com
+                with recursive base_type as (
+                  select oid, typbasetype, coalesce(nullif(typbasetype, 0), oid) as base from pg_type
+                  union select t.oid, b.typbasetype, coalesce(nullif(b.typbasetype, 0), b.oid) as base from base_type t join pg_type b on t.typbasetype = b.oid
+                )
                 select
                     jsonb_object_agg(
                         pt.oid::int,
                         jsonb_build_object(
                             'oid', pt.oid::int,
                             'schema_oid', pt.typnamespace::int,
+                            -- domain base type
+                            'base_oid', case pt.typtype when 'd' then (select base from base_type where typbasetype = 0 and oid = pt.oid) else pt.oid end::int,
                             'name', pt.typname,
                             'category', case
                                 when pt.typcategory = 'A' then 'Array'
@@ -248,6 +255,7 @@ select
                                     jsonb_build_object(
                                         'name', d.directive ->> 'name',
                                         'description', d.directive -> 'description',
+                                        'internal', coalesce(d.directive -> 'internal' = 'true', false),
                                         'total_count', jsonb_build_object(
                                             'enabled', coalesce(
                                                 (
@@ -337,7 +345,9 @@ select
                                                 select
                                                     jsonb_build_object(
                                                         'name', d.directive ->> 'name',
-                                                        'description', d.directive -> 'description'
+                                                        'description', d.directive -> 'description',
+                                                        'internal', coalesce(d.directive -> 'internal' = 'true', false),
+                                                        'update', d.directive ->> 'update'
                                                     )
                                                 from
                                                     directives d
@@ -424,7 +434,8 @@ select
                                 select
                                     jsonb_build_object(
                                         'name', d.directive ->> 'name',
-                                        'description', d.directive ->> 'description'
+                                        'description', d.directive ->> 'description',
+                                        'internal', coalesce(d.directive -> 'internal' = 'true', false)
                                     )
                                 from
                                     directives d
